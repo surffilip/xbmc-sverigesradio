@@ -1,7 +1,8 @@
-# coding: latin-1                                                                                                      
+# coding: latin-1
 import os
 import urllib2
 from urlparse import urlsplit, urlunsplit, SplitResult
+import urllib
 
 import xbmcgui
 import xbmcplugin
@@ -11,6 +12,7 @@ from xml.dom.minidom import parse, parseString
 
 BASE_API = "http://api.sr.se/api/v2/"
 CHANNEL_URL = "http://api.sr.se/api/v2/channels"
+NEWS_URL = "http://api.sr.se/api/v2/news"
 PROGRAM_LIST_URL = "http://api.sr.se/api/v2/programs"
 BROADCAST_LIST_URL = "http://api.sr.se/api/v2/broadcasts?programid={0}&pagination=false"
 PROGRAM_DETAIL_URL = "http://api.sr.se/api/v2/program/broadcastfeed.aspx?unitid="
@@ -68,30 +70,34 @@ def get_live(channel):
     return {
     'url': urlunsplit(SplitResult(protocol, stream.netloc, new_path, stream.query, stream.fragment)),
     'logo': channel['logo'] if channel['logo'] is not None else '',}
-    
+
 def list_live():
     for channel in fetch_channels():
         live = get_live(channel)
         add_posts(channel['title'], live['url'], channel['desc'], live['logo'], isLive = 'true', album=channel['originaltitle'], artist='Sveriges Radio')
     xbmcplugin.endOfDirectory(HANDLE)
 
-
 def list_channels(channelsurl):
     for channel in fetch_channels():
         url = urlsplit(channelsurl)
         new_path = os.path.join(url.path, 'programs', channel['id'])
         new_url = urlunsplit(SplitResult(url.scheme, url.netloc, new_path, url.query, url.fragment))
-        print url, new_path, new_url
+        print (url, new_path, new_url)
         logo = channel['logo'] if channel['logo'] is not None else ''
         add_posts(channel['title'],  new_url, channel['desc'], logo, isFolder = True, album = channel['originaltitle'], artist = 'Sveriges Radio')
     xbmcplugin.endOfDirectory(HANDLE)
-        
 
 def list_channel_programs(url):
-    plisturl = urlsplit(PROGRAM_LIST_URL)
+    path = urlsplit(url).path
+    if path == "/news/":
+        plisturl = urlsplit(NEWS_URL)
+    else:
+        plisturl = urlsplit(PROGRAM_LIST_URL)
     new_path = os.path.join(plisturl.path, 'index')
     channel_id = os.path.basename(urlsplit(url).path)
-    programs_url = urlunsplit(SplitResult(plisturl.scheme, plisturl.netloc, new_path, 'channelid={0}'.format(channel_id), ''))
+    query = {'pagination' : 'false', 'channelid' : channel_id, 'filter' : 'program.hasondemand&filterValue=true'}
+    query = urllib.urlencode(query)
+    programs_url = urlunsplit(SplitResult(plisturl.scheme, plisturl.netloc, new_path, query, ''))
     doc, state = load_xml(programs_url)
     if doc and not state:
         for program in doc.getElementsByTagName("program"):
@@ -110,13 +116,14 @@ def list_channel_programs(url):
             xbmc.executebuiltin('Notification("Sveriges Radio","Site down")')
         else:
             xbmc.executebuiltin('Notification("Sveriges Radio","Malformed result")')
+    xbmcplugin.addSortMethod(int(sys.argv[1]), xbmcplugin.SORT_METHOD_TITLE)
     xbmcplugin.endOfDirectory(HANDLE)
 
 
 def list_broadcasts(program_id):
     doc, state = load_xml(BROADCAST_LIST_URL.format(program_id))
     if doc and not state:
-        base = ""                                                                         
+        base = ""
         for broadcast in doc.getElementsByTagName("broadcast"):
             title = get_node_value(broadcast, "title")
             duration = get_node_value(broadcast, "totalduration")
@@ -134,11 +141,12 @@ def list_broadcasts(program_id):
     xbmcplugin.endOfDirectory(HANDLE)
 
 
-def add_posts(title, url, description='', thumb='', isPlayable='true', isLive='false', isFolder=False, artist='',
+def add_posts(title, url, description='', thumb='', isPlayable='true', \
+    isLive='false', isFolder=False, artist='',
               album='', duration=''):
-    print 'duration is', duration
+    print('duration is', duration)
     title = title.replace("\n", " ")
-    listitem=xbmcgui.ListItem(title, iconImage=thumb)
+    listitem = xbmcgui.ListItem(title, iconImage=thumb)
     listitem.setInfo(type='music', infoLabels={'title': title, 'artist': artist, 'album': album, 'duration': duration})
     listitem.setProperty('IsPlayable', isPlayable)
     listitem.setProperty('IsLive', isLive)
@@ -146,20 +154,25 @@ def add_posts(title, url, description='', thumb='', isPlayable='true', isLive='f
     return xbmcplugin.addDirectoryItem(HANDLE, url=url, listitem=listitem, isFolder=isFolder)
 
 def add_main_menu():
-    listitem=xbmcgui.ListItem("Live")
-    listitem.setInfo(type='music', infoLabels={ 'Title': "Live"})
+    listitem = xbmcgui.ListItem("Live")
+    listitem.setInfo(type='music', infoLabels={'Title': "Live"})
     listitem.setPath('live')
     u = sys.argv[0] + "live/"
     xbmcplugin.addDirectoryItem(HANDLE, url=u, listitem=listitem, isFolder=True)
-    listitem=xbmcgui.ListItem("Program A-Ö")
-    listitem.setInfo(type='music', infoLabels={ 'Title': "Program A-Ö"})
+    listitem = xbmcgui.ListItem("Program A-Ö")
+    listitem.setInfo(type='music', infoLabels={'Title': "Program A-Ö"})
     listitem.setPath('program')
     u = sys.argv[0] + "programs/"
     xbmcplugin.addDirectoryItem(HANDLE, url=u, listitem=listitem, isFolder=True)
-    listitem=xbmcgui.ListItem("Kanaler")
-    listitem.setInfo(type='music', infoLabels={ 'Title': "Kanaler"})
+    listitem = xbmcgui.ListItem("Kanaler")
+    listitem.setInfo(type='music', infoLabels={'Title': "Kanaler"})
     listitem.setPath('channel')
     u = sys.argv[0] + "channels/"
+    xbmcplugin.addDirectoryItem(HANDLE, url=u, listitem=listitem, isFolder=True)
+    listitem = xbmcgui.ListItem("Nyheter")
+    listitem.setInfo(type='music', infoLabels={'Title': "Nyheter"})
+    listitem.setPath('news')
+    u = sys.argv[0] + "news/"
     xbmcplugin.addDirectoryItem(HANDLE, url=u, listitem=listitem, isFolder=True)
     return xbmcplugin.endOfDirectory(HANDLE)
 
@@ -193,12 +206,12 @@ def load_xml(url):
 
 
 if (__name__ == "__main__" ):
-    MODE=sys.argv[0]
-    HANDLE=int(sys.argv[1])
+    MODE = sys.argv[0]
+    HANDLE = int(sys.argv[1])
     modes = MODE.split('/')
-    activemode =  modes[len(modes) - 2]
-    parentmode =  modes[len(modes) - 3]
-    print MODE, activemode, parentmode, 'hoioi' 
+    activemode = modes[len(modes) - 2]
+    parentmode = modes[len(modes) - 3]
+    print(MODE, activemode, parentmode, 'hoioi')
     if activemode == "allprograms":
         list_programs(MODE)
     elif activemode == "live":
@@ -207,8 +220,10 @@ if (__name__ == "__main__" ):
         list_channels(MODE)
     elif parentmode == "channels" and activemode == 'programs':
         list_channel_programs(MODE)
+    elif activemode == "news":
+        list_channel_programs(MODE)
     elif parentmode == "program":
         list_broadcasts(activemode)
-   
+
     else:
         add_main_menu()
